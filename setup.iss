@@ -5,7 +5,7 @@
 [Setup]
 AppId=SimpleVideoDownloader.Windows
 AppName=Simple Video Downloader
-AppVersion=1.0.0
+AppVersion=1.1.0
 DefaultDirName={localappdata}\Programs\Simple Video Downloader
 DefaultGroupName=Simple Video Downloader
 PrivilegesRequired=lowest

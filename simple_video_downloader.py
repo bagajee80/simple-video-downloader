@@ -50,9 +50,14 @@ def tool_path(name):
     return shutil.which(f"{name}.exe")
 
 
-def download_args(url, quality, ffmpeg, node):
-    height = QUALITIES[quality]
-    limit = f"[height<={height}]" if height else ""
+def download_args(url, quality, ffmpeg, node, extension="mp4"):
+    if extension == "mp3":
+        format_args = ["--format", "ba/b", "--extract-audio", "--audio-format", "mp3"]
+    else:
+        height = QUALITIES[quality]
+        limit = f"[height<={height}]" if height else ""
+        format_args = ["--format", f"bv*{limit}+ba/b{limit}", "--format-sort", "res",
+                       "--merge-output-format", "mp4", "--remux-video", "mp4"]
     return [
         "--ignore-config", "--no-playlist", "--no-colors",
         "--newline", "--progress", "--progress-delta", "0.2",
@@ -60,9 +65,7 @@ def download_args(url, quality, ffmpeg, node):
         "--progress-template", "postprocess:SVD_PROCESS",
         "--ffmpeg-location", str(Path(ffmpeg).parent),
         "--js-runtimes", f"node:{node}",
-        "--format", f"bv*{limit}+ba/b{limit}",
-        "--format-sort", "res",
-        "--merge-output-format", "mp4", "--remux-video", "mp4",
+        *format_args,
         "--windows-filenames", "-o", "%(title).90s [%(id)s].%(ext)s",
         "--", url,
     ]
@@ -138,7 +141,7 @@ def publish(source, directory):
     index = 0
     while True:
         suffix = f" ({index})" if index else ""
-        destination = directory / f"{source.stem}{suffix}.mp4"
+        destination = directory / f"{source.stem}{suffix}{source.suffix}"
         try:
             source.rename(destination)  # Windows rename fails if the target exists.
             return destination
@@ -158,11 +161,12 @@ class Downloader:
         self.folder = tk.StringVar(value=str(preferred if preferred.is_dir() else Path.home()))
         self.url = tk.StringVar(value=EXAMPLE_URL)
         self.quality = tk.StringVar(value="1080p")
+        self.format = tk.StringVar(value="mp4")
         self.status = tk.StringVar(value="다운로드할 영상 주소를 입력하세요.")
 
         root.title("Simple Video Downloader")
-        root.geometry("660x365")
-        root.minsize(540, 365)
+        root.geometry("660x400")
+        root.minsize(540, 400)
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.option_add("*Font", ("맑은 고딕", 10))
         panel = ttk.Frame(root, padding=24)
@@ -175,21 +179,30 @@ class Downloader:
         ttk.Label(panel, text="YouTube URL").grid(row=2, column=0, sticky="w", padx=(0, 12))
         address = ttk.Entry(panel, textvariable=self.url)
         address.grid(row=2, column=1, columnspan=2, sticky="ew")
-        ttk.Label(panel, text="화질").grid(row=3, column=0, sticky="w", pady=12)
-        quality = ttk.Combobox(panel, textvariable=self.quality, values=list(QUALITIES),
-                               state="readonly", width=14)
-        quality.grid(row=3, column=1, sticky="w")
-        ttk.Label(panel, text="저장 폴더").grid(row=4, column=0, sticky="w")
+        ttk.Label(panel, text="저장 형식").grid(row=3, column=0, sticky="w", pady=(12, 0))
+        formats = ttk.Frame(panel)
+        formats.grid(row=3, column=1, sticky="w", pady=(12, 0))
+        video = ttk.Radiobutton(formats, text="MP4 영상", variable=self.format, value="mp4",
+                               command=self.update_format)
+        video.pack(side="left", padx=(0, 16))
+        audio = ttk.Radiobutton(formats, text="MP3 음원", variable=self.format, value="mp3",
+                               command=self.update_format)
+        audio.pack(side="left")
+        ttk.Label(panel, text="화질").grid(row=4, column=0, sticky="w", pady=12)
+        self.quality_control = ttk.Combobox(panel, textvariable=self.quality, values=list(QUALITIES),
+                                            state="readonly", width=14)
+        self.quality_control.grid(row=4, column=1, sticky="w")
+        ttk.Label(panel, text="저장 폴더").grid(row=5, column=0, sticky="w")
         folder = ttk.Entry(panel, textvariable=self.folder)
-        folder.grid(row=4, column=1, sticky="ew")
+        folder.grid(row=5, column=1, sticky="ew")
         browse = ttk.Button(panel, text="찾아보기", command=self.browse)
-        browse.grid(row=4, column=2, padx=(8, 0))
-        self.inputs = (address, quality, folder, browse)
+        browse.grid(row=5, column=2, padx=(8, 0))
+        self.inputs = (address, video, audio, folder, browse)
         self.progress = ttk.Progressbar(panel, maximum=100)
-        self.progress.grid(row=5, columnspan=3, sticky="ew", pady=(22, 5))
-        ttk.Label(panel, textvariable=self.status).grid(row=6, columnspan=3, sticky="w")
+        self.progress.grid(row=6, columnspan=3, sticky="ew", pady=(22, 5))
+        ttk.Label(panel, textvariable=self.status).grid(row=7, columnspan=3, sticky="w")
         actions = ttk.Frame(panel)
-        actions.grid(row=7, columnspan=3, sticky="ew", pady=(14, 0))
+        actions.grid(row=8, columnspan=3, sticky="ew", pady=(14, 0))
         self.start_button = ttk.Button(actions, text="MP4 다운로드", command=self.start)
         self.start_button.pack(side="left")
         self.cancel_button = ttk.Button(actions, text="취소", command=self.cancel, state="disabled")
@@ -207,6 +220,13 @@ class Downloader:
         for control in (*self.inputs, self.start_button):
             control.state(["disabled"] if running else ["!disabled"])
         self.cancel_button.configure(state="normal" if running else "disabled")
+        self.update_format()
+
+    def update_format(self):
+        extension = self.format.get()
+        self.quality_control.configure(
+            state="disabled" if self.process is not None or extension == "mp3" else "readonly")
+        self.start_button.configure(text=f"{extension.upper()} 다운로드")
 
     def start(self):
         try:
@@ -231,7 +251,8 @@ class Downloader:
             if not getattr(sys, "frozen", False):
                 command.append(str(Path(__file__).resolve()))
             command += ["--worker", str(self.log)]
-            command += download_args(url, self.quality.get(), ffmpeg, node)
+            self.extension = self.format.get()
+            command += download_args(url, self.quality.get(), ffmpeg, node, self.extension)
             self.process = subprocess.Popen(command, cwd=self.temp,
                                             creationflags=subprocess.CREATE_NO_WINDOW)
             self.job = WindowsJob(self.process.pid)
@@ -270,7 +291,7 @@ class Downloader:
                 self.progress.configure(value=percent)
                 self.status.set(f"다운로드 중 · 현재 영상 또는 음원 {percent:.1f}%")
             elif line.startswith("SVD_PROCESS") and not self.cancelled:
-                self.status.set("MP4 처리 중…")
+                self.status.set(f"{self.extension.upper()} 처리 중…")
             elif line.startswith(("ERROR:", "Traceback")):
                 self.errors.append(line)
 
@@ -285,10 +306,11 @@ class Downloader:
                 self.progress.configure(value=0)
                 self.status.set("다운로드를 취소했습니다.")
             else:
-                videos = list(self.temp.glob("*.mp4"))
-                if exit_code or len(videos) != 1 or not videos[0].stat().st_size:
-                    raise OSError(self.errors[-1] if self.errors else f"MP4 파일을 만들지 못했습니다. 종료 코드 {exit_code}")
-                saved = publish(videos[0], self.directory)
+                files = list(self.temp.glob(f"*.{self.extension}"))
+                if exit_code or len(files) != 1 or not files[0].stat().st_size:
+                    detail = f"{self.extension.upper()} 파일을 만들지 못했습니다. 종료 코드 {exit_code}"
+                    raise OSError(self.errors[-1] if self.errors else detail)
+                saved = publish(files[0], self.directory)
                 self.completed_folder = saved.parent
                 self.open_button.configure(state="normal")
                 self.progress.configure(value=100)

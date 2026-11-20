@@ -31,6 +31,14 @@ class DownloadTests(unittest.TestCase):
                 for flag in ("--merge-output-format", "--remux-video"):
                     self.assertEqual(args[args.index(flag) + 1], "mp4")
 
+    def test_mp3_selects_audio_without_resolution_limit(self):
+        args = download_args(EXAMPLE_URL, "720p", r"C:\tools\ffmpeg.exe",
+                             r"C:\tools\node.exe", "mp3")
+        self.assertEqual(args[args.index("--format") + 1], "ba/b")
+        self.assertEqual(args[args.index("--audio-format") + 1], "mp3")
+        self.assertIn("--extract-audio", args)
+        self.assertNotIn("--remux-video", args)
+
     @unittest.skipUnless(os.name == "nt", "Windows file semantics")
     def test_existing_file_is_preserved(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -65,7 +73,8 @@ class GuiTests(unittest.TestCase):
             "        Path('unfinished.part').write_bytes(b'partial')\n"
             "        time.sleep(20)\n"
             "    print('SVD_PROCESS', flush=True)\n"
-            "    Path('test.mp4').write_bytes(b'fixture')\n",
+            "    extension = 'mp3' if '--extract-audio' in args else 'mp4'\n"
+            "    Path(f'test.{extension}').write_bytes(b'fixture')\n",
             encoding="utf-8",
         )
         self.enterContext(patch.dict(os.environ, {"PYTHONPATH": str(self.temp)}))
@@ -108,6 +117,21 @@ class GuiTests(unittest.TestCase):
         self.wait_for(lambda: self.app.process is None)
         self.assertEqual(self.app.status.get(), "다운로드를 취소했습니다.")
         self.assertEqual(list(self.destination.iterdir()), [])
+
+    def test_mp3_saved_with_suffix_and_video_quality_disabled(self):
+        existing = self.destination / "test.mp3"
+        existing.write_bytes(b"existing")
+        self.app.format.set("mp3")
+        self.app.update_format()
+        self.assertTrue(self.app.quality_control.instate(["disabled"]))
+        self.app.start()
+        self.wait_for(lambda: self.app.process is None)
+        self.assertEqual(self.app.status.get(), "다운로드 완료")
+        self.assertEqual(existing.read_bytes(), b"existing")
+        self.assertEqual((self.destination / "test (1).mp3").read_bytes(), b"fixture")
+        self.app.format.set("mp4")
+        self.app.update_format()
+        self.assertTrue(self.app.quality_control.instate(["readonly", "!disabled"]))
 
 
 if __name__ == "__main__":
